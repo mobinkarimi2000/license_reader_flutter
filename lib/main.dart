@@ -7,16 +7,16 @@ import 'dart:io';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Get available cameras
   final cameras = await availableCameras();
-  
+
   runApp(LicensePlateReaderApp(cameras: cameras));
 }
 
 class LicensePlateReaderApp extends StatelessWidget {
   final List<CameraDescription> cameras;
-  
+
   const LicensePlateReaderApp({super.key, required this.cameras});
 
   @override
@@ -34,18 +34,19 @@ class LicensePlateReaderApp extends StatelessWidget {
 
 class LicensePlateReaderScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
-  
+
   const LicensePlateReaderScreen({super.key, required this.cameras});
 
   @override
-  State<LicensePlateReaderScreen> createState() => _LicensePlateReaderScreenState();
+  State<LicensePlateReaderScreen> createState() =>
+      _LicensePlateReaderScreenState();
 }
 
 class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
   CameraController? _cameraController;
   final TextRecognizer _textRecognizer = TextRecognizer();
   final ImagePicker _imagePicker = ImagePicker();
-  
+
   String _recognizedText = '';
   String _licensePlate = '';
   bool _isProcessing = false;
@@ -59,7 +60,7 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
 
   Future<void> _initializeCamera() async {
     if (widget.cameras.isEmpty) return;
-    
+
     // Request camera permission
     final cameraPermission = await Permission.camera.request();
     if (cameraPermission != PermissionStatus.granted) {
@@ -104,9 +105,9 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
     } catch (e) {
       print('Error capturing image: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error capturing image: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error capturing image: $e')));
       }
     } finally {
       if (mounted) {
@@ -118,21 +119,23 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
   }
 
   Future<void> _pickImageFromGallery() async {
-    setState(() {
-      _isProcessing = true;
-    });
+    // setState(() {
+    //   _isProcessing = true;
+    // });
 
     try {
-      final XFile? image = await _imagePicker.pickImage(source: ImageSource.gallery);
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+      );
       if (image != null) {
         await _processImage(image.path);
       }
     } catch (e) {
       print('Error picking image: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error picking image: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error picking image: $e')));
       }
     } finally {
       if (mounted) {
@@ -146,11 +149,13 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
   Future<void> _processImage(String imagePath) async {
     try {
       final inputImage = InputImage.fromFilePath(imagePath);
-      final RecognizedText recognizedText = await _textRecognizer.processImage(inputImage);
-      
+      final RecognizedText recognizedText = await _textRecognizer.processImage(
+        inputImage,
+      );
+
       String allText = recognizedText.text;
       String detectedLicensePlate = _extractLicensePlate(allText);
-      
+
       if (mounted) {
         setState(() {
           _recognizedText = allText;
@@ -160,9 +165,9 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
     } catch (e) {
       print('Error processing image: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error processing image: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error processing image: $e')));
       }
     }
   }
@@ -176,7 +181,9 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
     ];
 
     for (final pattern in patterns) {
-      final matches = pattern.allMatches(text.replaceAll(' ', '').toUpperCase());
+      final matches = pattern.allMatches(
+        text.replaceAll(' ', '').toUpperCase(),
+      );
       if (matches.isNotEmpty) {
         return matches.first.group(0) ?? '';
       }
@@ -186,7 +193,8 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
     final lines = text.split('\n');
     for (final line in lines) {
       final cleanLine = line.trim().replaceAll(' ', '').toUpperCase();
-      if (cleanLine.length >= 4 && cleanLine.length <= 10 && 
+      if (cleanLine.length >= 4 &&
+          cleanLine.length <= 10 &&
           RegExp(r'^[A-Z0-9]+$').hasMatch(cleanLine)) {
         return cleanLine;
       }
@@ -233,13 +241,16 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
                         children: [
                           Icon(Icons.camera_alt, size: 64, color: Colors.grey),
                           SizedBox(height: 16),
-                          Text('Camera not available', style: TextStyle(color: Colors.grey)),
+                          Text(
+                            'Camera not available',
+                            style: TextStyle(color: Colors.grey),
+                          ),
                         ],
                       ),
                     ),
             ),
           ),
-          
+
           // Control Buttons
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -267,9 +278,9 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
               ],
             ),
           ),
-          
+
           const SizedBox(height: 16),
-          
+
           // Processing Indicator
           if (_isProcessing)
             const Padding(
@@ -283,7 +294,7 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
                 ],
               ),
             ),
-          
+
           // Results
           Expanded(
             flex: 2,
@@ -317,11 +328,15 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
                       border: Border.all(color: Colors.grey[400]!),
                     ),
                     child: Text(
-                      _licensePlate.isEmpty ? 'No license plate detected yet' : _licensePlate,
+                      _licensePlate.isEmpty
+                          ? 'No license plate detected yet'
+                          : _licensePlate,
                       style: TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
-                        color: _licensePlate.isEmpty ? Colors.grey : Colors.black,
+                        color: _licensePlate.isEmpty
+                            ? Colors.grey
+                            : Colors.black,
                         letterSpacing: 2,
                       ),
                       textAlign: TextAlign.center,
@@ -330,10 +345,7 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
                   const SizedBox(height: 16),
                   const Text(
                     'All Detected Text:',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
                   Expanded(
@@ -347,10 +359,14 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
                       ),
                       child: SingleChildScrollView(
                         child: Text(
-                          _recognizedText.isEmpty ? 'No text detected yet' : _recognizedText,
+                          _recognizedText.isEmpty
+                              ? 'No text detected yet'
+                              : _recognizedText,
                           style: TextStyle(
                             fontSize: 12,
-                            color: _recognizedText.isEmpty ? Colors.grey : Colors.black87,
+                            color: _recognizedText.isEmpty
+                                ? Colors.grey
+                                : Colors.black87,
                           ),
                         ),
                       ),
