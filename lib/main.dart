@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 
 void main() async {
@@ -11,22 +11,19 @@ void main() async {
   // Get available cameras
   final cameras = await availableCameras();
 
-  runApp(LicensePlateReaderApp(cameras: cameras));
+  runApp(MyApp(cameras: cameras));
 }
 
-class LicensePlateReaderApp extends StatelessWidget {
+class MyApp extends StatelessWidget {
   final List<CameraDescription> cameras;
 
-  const LicensePlateReaderApp({super.key, required this.cameras});
+  const MyApp({Key? key, required this.cameras}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'License Plate Reader',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
-      ),
+      theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
       home: LicensePlateReaderScreen(cameras: cameras),
     );
   }
@@ -35,7 +32,8 @@ class LicensePlateReaderApp extends StatelessWidget {
 class LicensePlateReaderScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
 
-  const LicensePlateReaderScreen({super.key, required this.cameras});
+  const LicensePlateReaderScreen({Key? key, required this.cameras})
+    : super(key: key);
 
   @override
   State<LicensePlateReaderScreen> createState() =>
@@ -46,11 +44,10 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
   CameraController? _cameraController;
   final TextRecognizer _textRecognizer = TextRecognizer();
   final ImagePicker _imagePicker = ImagePicker();
-
-  String _recognizedText = '';
-  String _licensePlate = '';
+  bool _isInitialized = false;
   bool _isProcessing = false;
-  bool _isCameraInitialized = false;
+  String _detectedText = '';
+  List<String> _detectedPlates = [];
 
   @override
   void initState() {
@@ -59,39 +56,37 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
   }
 
   Future<void> _initializeCamera() async {
-    if (widget.cameras.isEmpty) return;
-
     // Request camera permission
-    final cameraPermission = await Permission.camera.request();
-    if (cameraPermission != PermissionStatus.granted) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Camera permission is required')),
-        );
-      }
+    final status = await Permission.camera.request();
+    if (status != PermissionStatus.granted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Camera permission is required')),
+      );
       return;
     }
 
-    _cameraController = CameraController(
-      widget.cameras.first,
-      ResolutionPreset.high,
-      enableAudio: false,
-    );
+    if (widget.cameras.isNotEmpty) {
+      _cameraController = CameraController(
+        widget.cameras[0],
+        ResolutionPreset.high,
+        enableAudio: false,
+      );
 
-    try {
-      await _cameraController!.initialize();
-      if (mounted) {
+      try {
+        await _cameraController!.initialize();
         setState(() {
-          _isCameraInitialized = true;
+          _isInitialized = true;
         });
+      } catch (e) {
+        print('Error initializing camera: $e');
       }
-    } catch (e) {
-      print('Error initializing camera: $e');
     }
   }
 
   Future<void> _captureAndProcessImage() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+    if (_cameraController == null ||
+        !_cameraController!.value.isInitialized ||
+        _isProcessing) {
       return;
     }
 
@@ -102,47 +97,42 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
     try {
       final XFile image = await _cameraController!.takePicture();
       await _processImage(image.path);
+
+      // Clean up the temporary image file
+      await File(image.path).delete();
     } catch (e) {
-      print('Error capturing image: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error capturing image: $e')));
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-        });
-      }
+      print('Error processing image: $e');
+      setState(() {
+        _isProcessing = false;
+      });
     }
   }
 
-  Future<void> _pickImageFromGallery() async {
-    // setState(() {
-    //   _isProcessing = true;
-    // });
+  Future<void> _pickFromGallery() async {
+    if (_isProcessing) return;
+
+    setState(() {
+      _isProcessing = true;
+    });
 
     try {
       final XFile? image = await _imagePicker.pickImage(
         source: ImageSource.gallery,
+        imageQuality: 100,
       );
+
       if (image != null) {
         await _processImage(image.path);
-      }
-    } catch (e) {
-      print('Error picking image: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error picking image: $e')));
-      }
-    } finally {
-      if (mounted) {
+      } else {
         setState(() {
           _isProcessing = false;
         });
       }
+    } catch (e) {
+      print('Error picking from gallery: $e');
+      setState(() {
+        _isProcessing = false;
+      });
     }
   }
 
@@ -153,54 +143,114 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
         inputImage,
       );
 
-      String allText = recognizedText.text;
-      String detectedLicensePlate = _extractLicensePlate(allText);
+      String detectedText = recognizedText.text;
+      List<String> possiblePlates = _extractLicensePlates(detectedText);
 
-      if (mounted) {
-        setState(() {
-          _recognizedText = allText;
-          _licensePlate = detectedLicensePlate;
-        });
-      }
+      setState(() {
+        _detectedText = detectedText;
+        _detectedPlates = possiblePlates;
+        _isProcessing = false;
+      });
     } catch (e) {
       print('Error processing image: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error processing image: $e')));
-      }
+      setState(() {
+        _isProcessing = false;
+      });
     }
   }
 
-  String _extractLicensePlate(String text) {
-    // Simple regex patterns for common license plate formats
-    final patterns = [
-      RegExp(r'\b[A-Z]{1,3}[0-9]{1,4}[A-Z]{0,3}\b'), // ABC123, AB1234, etc.
-      RegExp(r'\b[0-9]{1,3}[A-Z]{1,3}[0-9]{1,4}\b'), // 123ABC456, etc.
-      RegExp(r'\b[A-Z0-9]{5,8}\b'), // General alphanumeric 5-8 chars
+  List<String> _extractLicensePlates(String text) {
+    List<String> plates = [];
+
+    // License plate patterns for different regions
+    List<RegExp> patterns = [
+      // Iranian license plate patterns
+      RegExp(
+        r'[۰-۹]{2}\s*[آ-ی]\s*[۰-۹]{3}\s*[۰-۹]{2}',
+      ), // Persian digits: ۱۲ الف ۳۴۵ ۶۷
+      RegExp(r'\d{2}\s*[آ-ی]\s*\d{3}\s*\d{2}'), // Mixed: 12 الف 345 67
+      RegExp(r'[۰-۹]{2}[آ-ی][۰-۹]{3}[۰-۹]{2}'), // Persian no spaces: ۱۲الف۳۴۵۶۷
+      RegExp(r'\d{2}[آ-ی]\d{3}\d{2}'), // Mixed no spaces: 12الف34567
+      RegExp(r'[۰-۹]{3}\s*[آ-ی]\s*[۰-۹]{2}'), // Older format: ۱۲۳ الف ۴۵
+      RegExp(r'\d{3}\s*[آ-ی]\s*\d{2}'), // Older format: 123 الف 45
+      // International/Western patterns
+      RegExp(r'[A-Z]{2,3}\s*\d{3,4}', caseSensitive: false), // AB 123, ABC 1234
+      RegExp(r'\d{3}\s*[A-Z]{3}', caseSensitive: false), // 123 ABC
+      RegExp(
+        r'[A-Z]{1,2}\d{1,2}\s*[A-Z]{3}',
+        caseSensitive: false,
+      ), // A1 ABC, AB12 XYZ
+      RegExp(
+        r'\d{1,3}[A-Z]{1,3}\d{1,3}',
+        caseSensitive: false,
+      ), // 1A2B3, 12AB34
+      RegExp(r'[A-Z0-9]{5,8}', caseSensitive: false), // General alphanumeric
     ];
 
-    for (final pattern in patterns) {
-      final matches = pattern.allMatches(
-        text.replaceAll(' ', '').toUpperCase(),
-      );
-      if (matches.isNotEmpty) {
-        return matches.first.group(0) ?? '';
+    for (RegExp pattern in patterns) {
+      Iterable<RegExpMatch> matches = pattern.allMatches(text);
+      for (RegExpMatch match in matches) {
+        String plate = match.group(0)!.replaceAll(' ', '');
+
+        // Validate Iranian plates specifically
+        if (_isIranianPlate(plate)) {
+          String normalizedPlate = _normalizeIranianPlate(plate);
+          if (!plates.contains(normalizedPlate)) {
+            plates.add(normalizedPlate);
+          }
+        }
+        // Validate international plates
+        else if (_isInternationalPlate(plate)) {
+          String normalizedPlate = plate.toUpperCase();
+          if (normalizedPlate.length >= 5 &&
+              normalizedPlate.length <= 8 &&
+              !plates.contains(normalizedPlate)) {
+            plates.add(normalizedPlate);
+          }
+        }
       }
     }
 
-    // If no pattern matches, return the first line that looks like it could be a license plate
-    final lines = text.split('\n');
-    for (final line in lines) {
-      final cleanLine = line.trim().replaceAll(' ', '').toUpperCase();
-      if (cleanLine.length >= 4 &&
-          cleanLine.length <= 10 &&
-          RegExp(r'^[A-Z0-9]+$').hasMatch(cleanLine)) {
-        return cleanLine;
-      }
-    }
+    return plates;
+  }
 
-    return 'No license plate detected';
+  bool _isIranianPlate(String plate) {
+    // Check if contains Persian characters or digits
+    return plate.contains(RegExp(r'[آ-ی۰-۹]')) &&
+        (plate.length >= 6 && plate.length <= 10);
+  }
+
+  bool _isInternationalPlate(String plate) {
+    // Check if contains only Latin characters and digits
+    return RegExp(r'^[A-Za-z0-9]+$').hasMatch(plate);
+  }
+
+  String _normalizeIranianPlate(String plate) {
+    // Convert Persian digits to English digits for display consistency
+    Map<String, String> persianToEnglish = {
+      '۰': '0',
+      '۱': '1',
+      '۲': '2',
+      '۳': '3',
+      '۴': '4',
+      '۵': '5',
+      '۶': '6',
+      '۷': '7',
+      '۸': '8',
+      '۹': '9',
+    };
+
+    String normalized = plate;
+    persianToEnglish.forEach((persian, english) {
+      normalized = normalized.replaceAll(persian, english);
+    });
+
+    return normalized;
+  }
+
+  bool _isIranianPlateDisplay(String plate) {
+    // Check if the plate contains Persian/Arabic characters
+    return plate.contains(RegExp(r'[آ-ی]'));
   }
 
   @override
@@ -215,8 +265,7 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('License Plate Reader'),
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Column(
         children: [
@@ -225,157 +274,149 @@ class _LicensePlateReaderScreenState extends State<LicensePlateReaderScreen> {
             flex: 3,
             child: Container(
               width: double.infinity,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              margin: const EdgeInsets.all(16),
-              child: _isCameraInitialized && _cameraController != null
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: CameraPreview(_cameraController!),
-                    )
-                  : const Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.camera_alt, size: 64, color: Colors.grey),
-                          SizedBox(height: 16),
-                          Text(
-                            'Camera not available',
-                            style: TextStyle(color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    ),
+              child: _isInitialized && _cameraController != null
+                  ? CameraPreview(_cameraController!)
+                  : const Center(child: CircularProgressIndicator()),
             ),
           ),
 
-          // Control Buttons
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          // Controls
+          Container(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
               children: [
-                ElevatedButton.icon(
-                  onPressed: _isProcessing ? null : _captureAndProcessImage,
-                  icon: const Icon(Icons.camera),
-                  label: const Text('Capture'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: _isProcessing ? null : _pickImageFromGallery,
-                  icon: const Icon(Icons.photo_library),
-                  label: const Text('Gallery'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // Processing Indicator
-          if (_isProcessing)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(width: 16),
-                  Text('Processing image...'),
-                ],
-              ),
-            ),
-
-          // Results
-          Expanded(
-            flex: 2,
-            child: Container(
-              width: double.infinity,
-              margin: const EdgeInsets.all(16),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.grey[100],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey[300]!),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Detected License Plate:',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.blue,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.grey[400]!),
-                    ),
-                    child: Text(
-                      _licensePlate.isEmpty
-                          ? 'No license plate detected yet'
-                          : _licensePlate,
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: _licensePlate.isEmpty
-                            ? Colors.grey
-                            : Colors.black,
-                        letterSpacing: 2,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'All Detected Text:',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.grey[400]!),
-                      ),
-                      child: SingleChildScrollView(
-                        child: Text(
-                          _recognizedText.isEmpty
-                              ? 'No text detected yet'
-                              : _recognizedText,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: _recognizedText.isEmpty
-                                ? Colors.grey
-                                : Colors.black87,
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: _isProcessing
+                            ? null
+                            : _captureAndProcessImage,
+                        icon: _isProcessing
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.camera_alt),
+                        label: Text(
+                          _isProcessing ? 'Processing...' : 'Take Photo',
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
                           ),
                         ),
                       ),
                     ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: _isProcessing ? null : _pickFromGallery,
+                        icon: const Icon(Icons.photo_library),
+                        label: const Text('From Gallery'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 16),
+
+                if (_detectedPlates.isNotEmpty) ...[
+                  const Text(
+                    'Detected License Plates:',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  ..._detectedPlates.map(
+                    (plate) => Container(
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        border: Border.all(color: Colors.green.shade300),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  plate,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    fontFamily: 'monospace',
+                                  ),
+                                ),
+                                if (_isIranianPlateDisplay(plate))
+                                  const Text(
+                                    'Iranian License Plate',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.green,
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () {
+                              // Copy to clipboard functionality
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Copied: $plate')),
+                              );
+                            },
+                            icon: const Icon(Icons.copy),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
-              ),
+              ],
             ),
           ),
+
+          // Raw Text Output (for debugging)
+          if (_detectedText.isNotEmpty)
+            Expanded(
+              flex: 1,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16.0),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  border: Border(top: BorderSide(color: Colors.grey.shade300)),
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Raw Detected Text:',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(_detectedText, style: const TextStyle(fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
